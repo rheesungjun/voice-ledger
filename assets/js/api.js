@@ -86,6 +86,8 @@ const API = (() => {
     list: (p) => call('list', p),
     update: (id, fields) => call('update', { id, fields }),
     remove: (id) => call('delete', { id }),
+    paymentSave: (payment) => call('paymentSave', { payment }),
+    paymentDelete: (name) => call('paymentDelete', { name }),
     queueSize: () => loadQueue().length,
     flushQueue
   };

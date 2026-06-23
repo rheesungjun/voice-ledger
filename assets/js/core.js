@@ -3,7 +3,7 @@
    각 페이지는 Core.init({ page, onReady }) 로 부팅합니다.
    ============================================================ */
 const Core = (() => {
-  const state = { members: [], categories: [], catMap: {} };
+  const state = { members: [], categories: [], payments: [], catMap: {} };
 
   // ── 포맷 유틸 ──
   const won = (n) => '₩' + (Number(n) || 0).toLocaleString('ko-KR');
@@ -42,6 +42,7 @@ const Core = (() => {
       { id: 'index',    href: 'index.html',    ico: '🎙️', label: '입력' },
       { id: 'history',  href: 'history.html',  ico: '📜', label: '내역' },
       { id: 'stats',    href: 'stats.html',    ico: '📊', label: '통계' },
+      { id: 'payments', href: 'payments.html', ico: '💳', label: '결제' },
       { id: 'settings', href: 'settings.html', ico: '⚙️', label: '설정' }
     ];
     const bar = document.createElement('nav');
@@ -91,6 +92,7 @@ const Core = (() => {
   function applyConfig(cfg) {
     state.members = cfg.members || [];
     state.categories = cfg.categories || [];
+    state.payments = cfg.payments || [];
     state.catMap = {};
     state.categories.forEach(c => { state.catMap[c.name] = c.emoji || '📦'; });
   }

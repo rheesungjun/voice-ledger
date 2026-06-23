@@ -236,6 +236,11 @@
         <div class="pc-main">
           <div class="pc-title" data-edit="item">${escape(it.item || '(내용?)')}</div>
           <div class="pc-sub">
+            <span data-edit="store">🏪 ${escape(it.store || '가게?')}</span> ·
+            <span data-edit="region">📍 ${escape(it.region || '지역?')}</span> ·
+            <span data-edit="payment_method">💳 ${escape(it.payment_method || '수단?')}</span>
+          </div>
+          <div class="pc-sub">
             <span data-edit="category">${escape(it.category || '기타')}</span> ·
             <span class="payer-chip" data-edit="payer">${escape(it.payer || '?')}</span> ·
             ${Core.fmtDate(it.date)} ${review}
@@ -315,6 +320,16 @@
     } else if (field === 'item') {
       const v = prompt('내용', it.item || '');
       if (v !== null) it.item = v.trim();
+    } else if (field === 'store') {
+      const v = prompt('가게 상호명', it.store || '');
+      if (v !== null) it.store = v.trim();
+    } else if (field === 'region') {
+      const v = prompt('지역', it.region || '');
+      if (v !== null) it.region = v.trim();
+    } else if (field === 'payment_method') {
+      const pays = Core.state.payments.map(p => p.name);
+      if (pays.length) { const cur = pays.indexOf(it.payment_method); it.payment_method = pays[(cur + 1) % pays.length]; }
+      else { const v = prompt('지불수단', it.payment_method || ''); if (v !== null) it.payment_method = v.trim(); }
     }
     it.needs_review = false;
     renderPending();
@@ -331,11 +346,13 @@
   }
 
   function rowHtml(r) {
+    const sub = [escape(r.store || r.category)];
+    if (r.payment_method) sub.push('💳' + escape(r.payment_method));
     return `<div class="expense-item">
       <span class="emoji">${Core.catEmoji(r.category)}</span>
       <div class="ei-main">
-        <div class="ei-title">${escape(r.item || r.category)}</div>
-        <div class="ei-sub">${escape(r.category)} ${r.payer ? '· <span class="payer-chip">' + escape(r.payer) + '</span>' : ''}</div>
+        <div class="ei-title">${escape(r.item || r.store || r.category)}</div>
+        <div class="ei-sub">${sub.join(' · ')} ${r.payer ? '· <span class="payer-chip">' + escape(r.payer) + '</span>' : ''}</div>
       </div>
       <div class="ei-amount">${Core.won(r.amount)}</div>
     </div>`;
@@ -350,7 +367,8 @@
   function toAppendItem(it) {
     return {
       date: it.date, amount: Math.round(Number(it.amount)), category: it.category || '기타',
-      item: it.item, payer: it.payer || '', payment_method: it.payment_method || '',
+      item: it.item, store: it.store || '', region: it.region || '',
+      payer: it.payer || '', payment_method: it.payment_method || '',
       memo: it.memo || '', source: it.source || 'voice', raw_text: it.raw_text || ''
     };
   }

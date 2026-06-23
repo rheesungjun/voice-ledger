@@ -1,12 +1,13 @@
 /* 앱 셸 캐시 — network-first(최신 우선, 오프라인 시 캐시 폴백).
    GAS API(POST, 교차출처)는 항상 네트워크. */
-const CACHE = 'ledger-v2';
+const CACHE = 'ledger-v3';
 const SHELL = [
-  './', './index.html', './history.html', './stats.html', './settings.html',
+  './', './index.html', './history.html', './stats.html', './payments.html', './settings.html',
   './manifest.webmanifest', './assets/icon.svg',
   './assets/css/core.css',
   './assets/js/config.js', './assets/js/api.js', './assets/js/core.js',
-  './assets/js/index.js', './assets/js/history.js', './assets/js/stats.js', './assets/js/settings.js'
+  './assets/js/index.js', './assets/js/history.js', './assets/js/stats.js',
+  './assets/js/payments.js', './assets/js/settings.js'
 ];
 
 self.addEventListener('install', (e) => {

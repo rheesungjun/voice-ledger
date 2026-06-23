@@ -18,14 +18,16 @@
 var MODEL_LIST = ['gemini-3-flash-preview', 'gemini-3.1-flash-lite-preview'];
 var GEMINI_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models/';
 var KST = 'GMT+9';
-var SCHEMA_VERSION = 1;
+var SCHEMA_VERSION = 2;
 
 // 시트 스키마 (헤더). 컬럼 추가는 점진 마이그레이션, 절대 삭제/초기화 금지.
+// 읽기/쓰기는 모두 헤더 기준(headerIndex)이라 물리적 컬럼 순서가 달라도 안전.
 var SCHEMA = {
-  expenses: ['id', 'date', 'amount', 'category', 'item', 'payer',
+  expenses: ['id', 'date', 'amount', 'category', 'item', 'store', 'region', 'payer',
              'payment_method', 'memo', 'created_at', 'source', 'raw_text', 'status'],
   members:    ['name', 'emoji', 'aliases'],
   categories: ['name', 'emoji', 'budget'],
+  payments:   ['name', 'type', 'target', 'benefit', 'note'],
   meta:       ['key', 'value']
 };
 
@@ -37,6 +39,10 @@ var DEFAULT_CATEGORIES = [
   ['식비', '🍚', ''], ['카페/간식', '☕', ''], ['교통', '🚌', ''],
   ['생활/마트', '🛒', ''], ['주거/공과금', '🏠', ''], ['의료/건강', '💊', ''],
   ['문화/여가', '🎬', ''], ['쇼핑', '🛍️', ''], ['경조사', '🎁', ''], ['기타', '📦', '']
+];
+// 지불수단: name, type(카드/현금/계좌/페이), target(월 실적 목표 원), benefit(혜택), note
+var DEFAULT_PAYMENTS = [
+  ['현금', '현금', 0, '', '']
 ];
 
 // ───────────────────────── 진입점 ─────────────────────────
@@ -64,6 +70,8 @@ function handle(e) {
       case 'list':     result = apiList(params);      break;
       case 'update':   result = apiUpdate(params);    break;
       case 'delete':   result = apiDelete(params);    break;
+      case 'paymentSave':   result = apiPaymentSave(params);   break;
+      case 'paymentDelete': result = apiPaymentDelete(params); break;
       default:         result = { ok: false, error: 'unknown_action: ' + action };
     }
     return json(result);
@@ -152,6 +160,8 @@ function seedDefaults(book) {
   if (m.getLastRow() < 2) m.getRange(2, 1, DEFAULT_MEMBERS.length, 3).setValues(DEFAULT_MEMBERS);
   var c = book.getSheetByName('categories');
   if (c.getLastRow() < 2) c.getRange(2, 1, DEFAULT_CATEGORIES.length, 3).setValues(DEFAULT_CATEGORIES);
+  var p = book.getSheetByName('payments');
+  if (p && p.getLastRow() < 2) p.getRange(2, 1, DEFAULT_PAYMENTS.length, DEFAULT_PAYMENTS[0].length).setValues(DEFAULT_PAYMENTS);
   var meta = book.getSheetByName('meta');
   if (meta.getLastRow() < 2) meta.getRange(2, 1, 1, 2).setValues([['schema_version', SCHEMA_VERSION]]);
 }
@@ -169,13 +179,24 @@ function readObjects(name) {
   });
 }
 
+/** 시트의 실제 헤더와 인덱스 맵 (물리 컬럼 순서 기준) */
+function headerIndex(sh) {
+  var headers = sh.getRange(1, 1, 1, Math.max(sh.getLastColumn(), 1)).getValues()[0];
+  var idx = {};
+  headers.forEach(function (h, i) { if (h !== '') idx[h] = i; });
+  return { headers: headers, idx: idx };
+}
+
 // ───────────────────────── API: config ─────────────────────────
 function apiConfig() {
   return {
     ok: true,
     schema_version: SCHEMA_VERSION,
     members: readObjects('members').filter(function (r) { return r.name; }),
-    categories: readObjects('categories').filter(function (r) { return r.name; })
+    categories: readObjects('categories').filter(function (r) { return r.name; }),
+    payments: readObjects('payments').filter(function (r) { return r.name; }).map(function (r) {
+      return { name: r.name, type: r.type, target: Number(r.target) || 0, benefit: r.benefit, note: r.note };
+    })
   };
 }
 
@@ -183,6 +204,7 @@ function apiConfig() {
 function apiConverse(params) {
   var members = readObjects('members').map(function (r) { return r.name; }).filter(String);
   var categories = readObjects('categories').map(function (r) { return r.name; }).filter(String);
+  var payments = readObjects('payments').map(function (r) { return r.name; }).filter(String);
   var today = Utilities.formatDate(new Date(), KST, 'yyyy-MM-dd');
   var weekday = ['일', '월', '화', '수', '목', '금', '토'][Number(Utilities.formatDate(new Date(), KST, 'u')) % 7];
 
@@ -191,12 +213,13 @@ function apiConverse(params) {
     .filter(function (r) { return r.id && r.status !== 'deleted'; })
     .map(function (r) {
       return { id: r.id, date: toDateStr(r.date), amount: Number(r.amount) || 0,
-               category: r.category, item: r.item, payer: r.payer };
+               category: r.category, item: r.item, store: r.store, payer: r.payer,
+               payment_method: r.payment_method };
     })
     .sort(function (a, b) { return String(b.date).localeCompare(String(a.date)); })
     .slice(0, 40);
 
-  var system = buildPrompt(today, weekday, members, categories,
+  var system = buildPrompt(today, weekday, members, categories, payments,
                            params.history || [], params.pending || [], recent);
 
   var parts = [{ text: system }];
@@ -232,15 +255,22 @@ function apiConverse(params) {
   };
 }
 
-function buildPrompt(today, weekday, members, categories, history, pending, recent) {
+function buildPrompt(today, weekday, members, categories, payments, history, pending, recent) {
   return [
     '당신은 한국어 음성 가계부 비서입니다. 사용자의 발화(오디오 또는 텍스트)를 받아 지출 내역을 구조화합니다.',
     '오늘 날짜: ' + today + ' (' + weekday + '요일, KST). "어제/그제/지난 금요일" 등 상대표현은 이 기준으로 해석하세요.',
     '구성원(지출자 후보): ' + JSON.stringify(members) + '. "내가/나"는 첫 번째 구성원, "자기/너/진이"는 두 번째로 매핑하되 별칭을 우선하세요.',
     '사용 가능한 카테고리(이 목록 안에서만 고르세요, 새로 만들지 마세요): ' + JSON.stringify(categories) + '. 애매하면 "기타".',
+    '등록된 지불수단(payment_method는 가능하면 이 목록의 이름으로 매핑): ' + JSON.stringify(payments) + '.',
     '금액은 한국어 표현을 정수(원)로 변환: "삼천오백원"→3500, "만오천"→15000, "3만2천"→32000.',
     '한 발화에 여러 지출이 있으면 각각 별도 항목으로 분리하세요.',
-    '모르는 값은 추측하지 말고 null로 두고 needs_review=true 로 표시하세요.',
+    '',
+    '[완전한 지출 1건의 필수 정보] amount(금액), item(품목/내용), store(가게 상호명), region(지역), payment_method(지불수단), payer(지출자), date(날짜).',
+    '★중요: 사용자가 말하지 않아 비어있는 필수 정보가 있으면, 추측해서 채우거나 confirm 하지 마세요.',
+    '대신 intent=propose(또는 correct)로 두고 reply 에서 부족한 항목을 자연스럽게 한두 개씩 되물으세요.',
+    '   (예: "어느 가게에서 쓰셨어요?", "무슨 카드로 결제했어요?", "지역은 어디였어요?")',
+    '모든 필수 정보가 채워졌을 때만 reply 로 "이대로 저장할까요?"라고 확인을 요청하세요.',
+    '사용자가 "없어/몰라/현금이야"처럼 명시하면 그 값으로 두거나 null + needs_review=true 로 표시한 뒤 진행하세요.',
     '',
     '대화 맥락(이전 턴):',
     'history = ' + JSON.stringify(history),
@@ -250,9 +280,9 @@ function buildPrompt(today, weekday, members, categories, history, pending, rece
     'recent = ' + JSON.stringify(recent),
     '',
     '이번 발화의 의도를 intent 로 분류하세요:',
-    ' - "propose": 새 지출을 말함 (items에 추가)',
-    ' - "correct": 미저장 제안(pending)을 수정 ("그건 5천원") → items 전체를 다시 출력',
-    ' - "confirm": 동의 ("저장해", "응 맞아", "기록해", "그래")',
+    ' - "propose": 새 지출을 말함 (items에 추가). 필수 정보가 부족하면 reply로 되물음.',
+    ' - "correct": 미저장 제안(pending)을 수정/보완 ("그건 5천원", "스타벅스 강남점이야") → items 전체를 다시 출력',
+    ' - "confirm": 동의 ("저장해", "응 맞아", "기록해", "그래") — 필수 정보가 모두 찼을 때만',
     ' - "cancel": 취소 ("아니", "취소", "됐어")',
     ' - "edit": 이미 저장된 내역을 수정 요청 ("어제 점심 9천원을 만원으로")',
     ' - "delete": 이미 저장된 내역을 삭제 요청 ("아까 커피 지출 지워줘")',
@@ -286,6 +316,8 @@ var RESPONSE_SCHEMA = {
           amount:         { type: 'number', nullable: true },
           category:       { type: 'string', nullable: true },
           item:           { type: 'string', nullable: true },
+          store:          { type: 'string', nullable: true },
+          region:         { type: 'string', nullable: true },
           payer:          { type: 'string', nullable: true },
           payment_method: { type: 'string', nullable: true },
           memo:           { type: 'string', nullable: true },
@@ -308,6 +340,8 @@ var RESPONSE_SCHEMA = {
               amount:         { type: 'number', nullable: true },
               category:       { type: 'string', nullable: true },
               item:           { type: 'string', nullable: true },
+              store:          { type: 'string', nullable: true },
+              region:         { type: 'string', nullable: true },
               payer:          { type: 'string', nullable: true },
               date:           { type: 'string', nullable: true },
               payment_method: { type: 'string', nullable: true },
@@ -376,24 +410,21 @@ function apiAppend(params) {
   var today = Utilities.formatDate(new Date(), KST, 'yyyy-MM-dd');
   var saved = [];
 
+  var H = headerIndex(sh);
   items.forEach(function (it) {
     var id = it.id || (Date.now().toString(36) + Math.random().toString(36).slice(2, 7));
-    var row = [
-      id,
-      it.date || today,
-      Number(it.amount) || 0,
-      it.category || '기타',
-      it.item || '',
-      it.payer || '',
-      it.payment_method || '',
-      it.memo || '',
-      now,
-      it.source || 'voice',
-      it.raw_text || '',
-      'active'
-    ];
+    var rec = {
+      id: id, date: it.date || today, amount: Number(it.amount) || 0,
+      category: it.category || '기타', item: it.item || '',
+      store: it.store || '', region: it.region || '',
+      payer: it.payer || '', payment_method: it.payment_method || '',
+      memo: it.memo || '', created_at: now, source: it.source || 'voice',
+      raw_text: it.raw_text || '', status: 'active'
+    };
+    var row = H.headers.map(function (h) { return rec[h] !== undefined ? rec[h] : ''; });
     sh.appendRow(row);
-    saved.push({ id: id, date: row[1], amount: row[2], category: row[3], item: row[4], payer: row[5] });
+    saved.push({ id: id, date: rec.date, amount: rec.amount, category: rec.category,
+                 item: rec.item, store: rec.store, payer: rec.payer, payment_method: rec.payment_method });
   });
   return { ok: true, saved: saved };
 }
@@ -412,12 +443,13 @@ function apiList(params) {
   });
 
   // 요약 계산
-  var total = 0, byCategory = {}, byPayer = {};
+  var total = 0, byCategory = {}, byPayer = {}, byPayment = {};
   filtered.forEach(function (r) {
     var amt = Number(r.amount) || 0;
     total += amt;
     byCategory[r.category] = (byCategory[r.category] || 0) + amt;
     byPayer[r.payer] = (byPayer[r.payer] || 0) + amt;
+    if (r.payment_method) byPayment[r.payment_method] = (byPayment[r.payment_method] || 0) + amt;
   });
 
   filtered.sort(function (a, b) {
@@ -431,11 +463,12 @@ function apiList(params) {
     expenses: filtered.map(function (r) {
       return {
         id: r.id, date: toDateStr(r.date), amount: Number(r.amount) || 0,
-        category: r.category, item: r.item, payer: r.payer,
-        payment_method: r.payment_method, memo: r.memo
+        category: r.category, item: r.item, store: r.store, region: r.region,
+        payer: r.payer, payment_method: r.payment_method, memo: r.memo
       };
     }),
-    summary: { total: total, count: filtered.length, byCategory: byCategory, byPayer: byPayer }
+    summary: { total: total, count: filtered.length, byCategory: byCategory,
+               byPayer: byPayer, byPayment: byPayment }
   };
 }
 
@@ -458,7 +491,11 @@ function toDateStr(v) {
 
 // ───────────────────────── API: update / delete ─────────────────────────
 function findRowIndexById(sh, id) {
-  var ids = sh.getRange(2, 1, Math.max(sh.getLastRow() - 1, 1), 1).getValues();
+  var H = headerIndex(sh);
+  var idCol = (H.idx['id'] || 0) + 1;
+  var n = Math.max(sh.getLastRow() - 1, 0);
+  if (n < 1) return -1;
+  var ids = sh.getRange(2, idCol, n, 1).getValues();
   for (var i = 0; i < ids.length; i++) { if (ids[i][0] === id) return i + 2; }
   return -1;
 }
@@ -467,11 +504,10 @@ function apiUpdate(params) {
   var sh = ssBook().getSheetByName('expenses');
   var rowIdx = findRowIndexById(sh, params.id);
   if (rowIdx < 0) return { ok: false, error: 'not_found' };
-  var headers = SCHEMA.expenses;
+  var H = headerIndex(sh);
   var fields = params.fields || {};
   Object.keys(fields).forEach(function (k) {
-    var col = headers.indexOf(k);
-    if (col >= 0) sh.getRange(rowIdx, col + 1).setValue(fields[k]);
+    if (H.idx[k] !== undefined) sh.getRange(rowIdx, H.idx[k] + 1).setValue(fields[k]);
   });
   return { ok: true, id: params.id };
 }
@@ -480,7 +516,45 @@ function apiDelete(params) {
   var sh = ssBook().getSheetByName('expenses');
   var rowIdx = findRowIndexById(sh, params.id);
   if (rowIdx < 0) return { ok: false, error: 'not_found' };
-  var col = SCHEMA.expenses.indexOf('status') + 1;
-  sh.getRange(rowIdx, col).setValue('deleted'); // 소프트 삭제
+  var H = headerIndex(sh);
+  if (H.idx['status'] === undefined) return { ok: false, error: 'no_status_col' };
+  sh.getRange(rowIdx, H.idx['status'] + 1).setValue('deleted'); // 소프트 삭제
   return { ok: true, id: params.id };
+}
+
+// ───────────────────────── API: payments (지불수단 관리) ─────────────────────────
+function apiPaymentSave(params) {
+  var p = params.payment || {};
+  if (!p.name) return { ok: false, error: 'no_name' };
+  var sh = ssBook().getSheetByName('payments');
+  var H = headerIndex(sh);
+  var rec = {
+    name: String(p.name), type: p.type || '카드',
+    target: Number(p.target) || 0, benefit: p.benefit || '', note: p.note || ''
+  };
+  // 이름으로 upsert
+  var n = Math.max(sh.getLastRow() - 1, 0);
+  var nameCol = (H.idx['name'] || 0) + 1;
+  var rowIdx = -1;
+  if (n >= 1) {
+    var names = sh.getRange(2, nameCol, n, 1).getValues();
+    for (var i = 0; i < names.length; i++) { if (String(names[i][0]) === rec.name) { rowIdx = i + 2; break; } }
+  }
+  var row = H.headers.map(function (h) { return rec[h] !== undefined ? rec[h] : ''; });
+  if (rowIdx < 0) sh.appendRow(row);
+  else sh.getRange(rowIdx, 1, 1, row.length).setValues([row]);
+  return { ok: true, payment: rec };
+}
+
+function apiPaymentDelete(params) {
+  var sh = ssBook().getSheetByName('payments');
+  var H = headerIndex(sh);
+  var n = Math.max(sh.getLastRow() - 1, 0);
+  if (n < 1) return { ok: false, error: 'not_found' };
+  var nameCol = (H.idx['name'] || 0) + 1;
+  var names = sh.getRange(2, nameCol, n, 1).getValues();
+  for (var i = 0; i < names.length; i++) {
+    if (String(names[i][0]) === String(params.name)) { sh.deleteRow(i + 2); return { ok: true, name: params.name }; }
+  }
+  return { ok: false, error: 'not_found' };
 }

@@ -92,8 +92,8 @@
     return `<div class="expense-item">
       <span class="emoji">${Core.catEmoji(r.category)}</span>
       <div class="ei-main">
-        <div class="ei-title">${esc(r.item || r.category)}</div>
-        <div class="ei-sub">${esc(r.category)} ${r.payer ? '· <span class="payer-chip">' + esc(r.payer) + '</span>' : ''}</div>
+        <div class="ei-title">${esc(r.item || r.store || r.category)}</div>
+        <div class="ei-sub">${esc(r.store || r.category)}${r.payment_method ? ' · 💳' + esc(r.payment_method) : ''} ${r.payer ? '· <span class="payer-chip">' + esc(r.payer) + '</span>' : ''}</div>
       </div>
       <div class="ei-amount" data-amt="${r.id}">${Core.won(r.amount)}</div>
       <button class="del" data-del="${r.id}" title="삭제">🗑️</button>

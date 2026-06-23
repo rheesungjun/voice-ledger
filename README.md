@@ -80,6 +80,7 @@
 ├── index.html               # 대화(입력) 화면
 ├── history.html             # 내역
 ├── stats.html               # 통계(사람별/카테고리별)
+├── payments.html            # 지불수단·카드 실적 관리
 ├── settings.html            # PIN·서버·관리
 ├── manifest.webmanifest     # PWA
 ├── service-worker.js        # 오프라인 캐시
@@ -91,8 +92,15 @@
         ├── core.js          # 헤더/탭바/PIN 게이트/유틸
         ├── index.js         # 음성 대화 루프(VAD+TTS)
         ├── history.js
-        └── stats.js
+        ├── stats.js
+        └── payments.js
 ```
+
+## 데이터 필드 / 시트 탭
+- `expenses`: id, date, amount, category, item, **store(상호명), region(지역)**, payer, payment_method, memo, …
+- `payments` 탭(신규): name, type(카드/현금/계좌/페이), **target(월 실적 목표)**, benefit(혜택), note
+  - 결제 탭에서 카드별 **이번 달 사용액 / 실적 목표 달성률**을 확인. 카드/목표는 결제 탭 또는 시트에서 편집.
+- Gemini는 대화 중 **상호명·지역·지불수단** 등 빠진 정보를 되물어 완전한 내역으로 저장합니다.
 
 ## 트러블슈팅
 - **unauthorized**: PIN 불일치 또는 `PIN_HASH` 미설정. `setup_setPin()` 재실행.
