@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#FFF9E6" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="apple-touch-icon" href="assets/icon.svg" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <title>가계부</title>
+  <link rel="stylesheet" href="assets/css/core.css" />
+  <style>
+    .app-main { padding-bottom: 165px; }
+    .today-card { margin-bottom: 8px; }
+    .conv-area { display: flex; flex-direction: column; gap: 10px; margin: 8px 0; }
+    .bubble { max-width: 82%; padding: 10px 14px; font-size: 0.92rem; border-radius: 16px; line-height: 1.45; }
+    .bubble.user { align-self: flex-end; background: var(--accent-gradient); color: #fff; border-bottom-right-radius: 4px; }
+    .bubble.bot { align-self: flex-start; background: var(--bg-glass); border-left: 3px solid var(--accent-primary);
+                  border-bottom-left-radius: 4px; }
+    .status-pill { align-self: center; font-size: 0.75rem; color: var(--text-secondary);
+                   padding: 4px 12px; background: var(--bg-glass); border-radius: var(--radius-pill); }
+    .pending-wrap { display: flex; flex-direction: column; gap: 8px; }
+    .pending-card { border: 1.5px dashed var(--brand-pink); background: #fff; border-radius: var(--radius-sm);
+                    padding: 10px 12px; display: flex; align-items: center; gap: 10px; }
+    .pending-card .emoji { font-size: 1.3rem; }
+    .pending-card .pc-main { flex: 1; min-width: 0; }
+    .pending-card .pc-title { font-weight: 600; font-size: 0.92rem; }
+    .pending-card .pc-sub { font-size: 0.72rem; color: var(--text-tertiary); }
+    .pending-card .pc-amt { font-weight: 700; }
+    .pending-card .pc-x { background: none; border: none; color: var(--status-deleted); font-size: 1.1rem;
+                          cursor: pointer; padding: 4px 6px; }
+    .pending-card .review { color: var(--status-pending); font-size: 0.68rem; font-weight: 700; }
+    .pending-actions { display: flex; gap: 10px; margin-top: 4px; }
+    .pending-actions .btn { flex: 1; }
+
+    .dock { position: fixed; left: 0; right: 0; bottom: calc(56px + env(safe-area-inset-bottom));
+            max-width: 800px; margin: 0 auto; display: flex; gap: 10px; align-items: center;
+            padding: 10px 14px; background: rgba(255,255,255,0.95); backdrop-filter: blur(16px);
+            border-top: 1px solid var(--border-subtle); z-index: 9000; }
+    .dock input { flex: 1; }
+    .mic-btn { width: 50px; height: 50px; flex-shrink: 0; border: none; border-radius: 50%;
+               background: var(--accent-gradient); color: #fff; font-size: 1.3rem; cursor: pointer;
+               box-shadow: var(--shadow-glow); display: grid; place-items: center;
+               transition: background var(--transition-normal); }
+    .mic-btn.listening { animation: micPulse 1s infinite; }
+    .mic-btn.processing { background: var(--status-processing); animation: micSpin 0.8s linear infinite; }
+    .mic-btn.speaking { background: var(--brand-mint); }
+    @keyframes micPulse { 0%,100% { transform: scale(1); box-shadow: var(--shadow-glow); }
+                          50% { transform: scale(1.12); box-shadow: 0 0 0 10px hsla(345,100%,70%,0.12); } }
+    @keyframes micSpin { to { transform: rotate(360deg); } }
+    .end-chip { position: fixed; bottom: calc(120px + env(safe-area-inset-bottom)); left: 50%;
+                transform: translateX(-50%); z-index: 9001; }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <main class="app-main">
+      <div class="card stat-card today-card">
+        <div class="stat-label">오늘 지출</div>
+        <div class="stat-value" id="todayTotal">₩0</div>
+      </div>
+
+      <div id="convArea" class="conv-area"></div>
+
+      <div class="section-title">오늘 내역</div>
+      <div id="todayList" class="expense-list"></div>
+    </main>
+
+    <button class="btn btn-ghost btn-sm end-chip hidden" id="endChip">대화 종료</button>
+
+    <div class="dock">
+      <input id="textInput" type="text" placeholder="입력하거나 마이크를 누르세요" autocomplete="off" />
+      <button class="mic-btn" id="micBtn" aria-label="대화 시작">🎙️</button>
+    </div>
+  </div>
+
+  <script src="assets/js/config.js"></script>
+  <script src="assets/js/api.js"></script>
+  <script src="assets/js/core.js"></script>
+  <script src="assets/js/index.js"></script>
+</body>
+</html>
