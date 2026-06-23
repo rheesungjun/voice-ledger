@@ -1,5 +1,6 @@
-/* 앱 셸 캐시 — 정적 파일만. GAS API(POST, 교차출처)는 항상 네트워크. */
-const CACHE = 'ledger-v1';
+/* 앱 셸 캐시 — network-first(최신 우선, 오프라인 시 캐시 폴백).
+   GAS API(POST, 교차출처)는 항상 네트워크. */
+const CACHE = 'ledger-v2';
 const SHELL = [
   './', './index.html', './history.html', './stats.html', './settings.html',
   './manifest.webmanifest', './assets/icon.svg',
@@ -21,13 +22,14 @@ self.addEventListener('activate', (e) => {
 
 self.addEventListener('fetch', (e) => {
   const req = e.request;
-  // 동일 출처 GET 만 캐시 처리. API 호출(script.google.com 등)은 통과.
+  // 동일 출처 GET 만 처리. API 호출(script.google.com 등)은 통과.
   if (req.method !== 'GET' || new URL(req.url).origin !== self.location.origin) return;
+  // network-first: 최신을 받아 캐시 갱신, 실패하면 캐시 → 마지막으로 index.html
   e.respondWith(
-    caches.match(req).then((hit) => hit || fetch(req).then((res) => {
+    fetch(req).then((res) => {
       const copy = res.clone();
       caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {});
       return res;
-    }).catch(() => caches.match('./index.html')))
+    }).catch(() => caches.match(req).then((hit) => hit || caches.match('./index.html')))
   );
 });
