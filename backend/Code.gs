@@ -186,8 +186,18 @@ function apiConverse(params) {
   var today = Utilities.formatDate(new Date(), KST, 'yyyy-MM-dd');
   var weekday = ['일', '월', '화', '수', '목', '금', '토'][Number(Utilities.formatDate(new Date(), KST, 'u')) % 7];
 
+  // 이미 저장된 최근 내역(수정/삭제 대상) — id 포함, 최대 40건
+  var recent = readObjects('expenses')
+    .filter(function (r) { return r.id && r.status !== 'deleted'; })
+    .map(function (r) {
+      return { id: r.id, date: toDateStr(r.date), amount: Number(r.amount) || 0,
+               category: r.category, item: r.item, payer: r.payer };
+    })
+    .sort(function (a, b) { return String(b.date).localeCompare(String(a.date)); })
+    .slice(0, 40);
+
   var system = buildPrompt(today, weekday, members, categories,
-                           params.history || [], params.pending || []);
+                           params.history || [], params.pending || [], recent);
 
   var parts = [{ text: system }];
   if (params.audio_base64) {
@@ -205,16 +215,24 @@ function apiConverse(params) {
     if (it.amount != null) it.amount = Math.round(Number(it.amount)) || null;
     if (!it.date) it.date = today;
   });
+  (out.edits || []).forEach(function (e) {
+    if (e.fields) {
+      if (e.fields.category && categories.indexOf(e.fields.category) === -1) e.fields.category = '기타';
+      if (e.fields.amount != null) e.fields.amount = Math.round(Number(e.fields.amount)) || null;
+    }
+  });
   return {
     ok: true,
     transcript: out.transcript || '',
     reply: out.reply || '',
     intent: out.intent || 'propose',
-    items: out.items || []
+    items: out.items || [],
+    edits: out.edits || [],
+    deletes: out.deletes || []
   };
 }
 
-function buildPrompt(today, weekday, members, categories, history, pending) {
+function buildPrompt(today, weekday, members, categories, history, pending, recent) {
   return [
     '당신은 한국어 음성 가계부 비서입니다. 사용자의 발화(오디오 또는 텍스트)를 받아 지출 내역을 구조화합니다.',
     '오늘 날짜: ' + today + ' (' + weekday + '요일, KST). "어제/그제/지난 금요일" 등 상대표현은 이 기준으로 해석하세요.',
@@ -228,15 +246,28 @@ function buildPrompt(today, weekday, members, categories, history, pending) {
     'history = ' + JSON.stringify(history),
     '현재까지 제안된(미저장) 항목 pending = ' + JSON.stringify(pending),
     '',
+    '이미 저장된 최근 내역(수정/삭제 대상, id 포함):',
+    'recent = ' + JSON.stringify(recent),
+    '',
     '이번 발화의 의도를 intent 로 분류하세요:',
     ' - "propose": 새 지출을 말함 (items에 추가)',
-    ' - "correct": 기존 제안을 수정 ("그건 5천원", "지출자 진이로") → pending을 반영해 items 전체를 다시 출력',
-    ' - "confirm": 저장 동의 ("저장해", "응 맞아", "기록해")',
-    ' - "cancel": 취소/삭제 ("아니 취소", "지워")',
+    ' - "correct": 미저장 제안(pending)을 수정 ("그건 5천원") → items 전체를 다시 출력',
+    ' - "confirm": 동의 ("저장해", "응 맞아", "기록해", "그래")',
+    ' - "cancel": 취소 ("아니", "취소", "됐어")',
+    ' - "edit": 이미 저장된 내역을 수정 요청 ("어제 점심 9천원을 만원으로")',
+    ' - "delete": 이미 저장된 내역을 삭제 요청 ("아까 커피 지출 지워줘")',
     ' - "chitchat": 잡담/무관',
     '',
-    '반드시 아래 JSON 스키마로만 응답하세요. items는 항상 "현재 제안 상태 전체"(수정 누적 반영)입니다.',
-    'reply는 사용자에게 음성으로 읽어줄 짧고 자연스러운 한국어 확인 문장입니다. 예: "점심 9천원, 커피 4500원 기록할까요?"'
+    'edit/delete 규칙(중요):',
+    ' - recent 목록에서 날짜·내용·금액·지출자 단서로 대상 행을 찾아 그 id 를 사용하세요.',
+    ' - edit → edits=[{id, label, fields:{바꿀 필드만}}]. label은 사람이 읽을 설명(예: "어제 점심 9000원").',
+    ' - delete → deletes=[{id, label}].',
+    ' - 반드시 reply 로 확인을 요청하세요(예: "어제 점심 9000원을 10000원으로 바꿀까요?"). 실제 변경은 사용자가 동의(intent=confirm)한 다음에만 일어납니다.',
+    ' - 대상이 모호하거나 후보가 여러 개면 edits/deletes 를 비우고 reply 로 어느 것인지 되물으세요.',
+    ' - 수정/삭제 요청이 아니면 edits, deletes 는 빈 배열로 두세요.',
+    '',
+    '반드시 아래 JSON 스키마로만 응답하세요. items는 미저장 제안의 현재 전체 상태입니다.',
+    'reply는 음성으로 읽어줄 짧고 자연스러운 한국어 한 문장입니다.'
   ].join('\n');
 }
 
@@ -245,7 +276,7 @@ var RESPONSE_SCHEMA = {
   properties: {
     transcript: { type: 'string' },
     reply: { type: 'string' },
-    intent: { type: 'string', enum: ['propose', 'correct', 'confirm', 'cancel', 'chitchat'] },
+    intent: { type: 'string', enum: ['propose', 'correct', 'confirm', 'cancel', 'edit', 'delete', 'chitchat'] },
     items: {
       type: 'array',
       items: {
@@ -262,6 +293,37 @@ var RESPONSE_SCHEMA = {
           needs_review:   { type: 'boolean' }
         },
         required: ['date', 'amount', 'item']
+      }
+    },
+    edits: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          id:    { type: 'string' },
+          label: { type: 'string' },
+          fields: {
+            type: 'object',
+            properties: {
+              amount:         { type: 'number', nullable: true },
+              category:       { type: 'string', nullable: true },
+              item:           { type: 'string', nullable: true },
+              payer:          { type: 'string', nullable: true },
+              date:           { type: 'string', nullable: true },
+              payment_method: { type: 'string', nullable: true },
+              memo:           { type: 'string', nullable: true }
+            }
+          }
+        },
+        required: ['id']
+      }
+    },
+    deletes: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: { id: { type: 'string' }, label: { type: 'string' } },
+        required: ['id']
       }
     }
   },

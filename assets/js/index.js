@@ -4,7 +4,7 @@
 (async function () {
   let els = {};
   // 대화 상태 (프론트가 보유 → GAS는 무상태)
-  const conv = { active: false, busy: false, history: [], pending: [] };
+  const conv = { active: false, busy: false, history: [], pending: [], pendingOps: { edits: [], deletes: [] } };
   // 오디오 자원
   let stream = null, audioCtx = null, analyser = null, vadRAF = null, recorder = null, chunks = [];
 
@@ -130,17 +130,23 @@
     if (out.reply) addBubble('bot', out.reply);
     conv.history.push({ user: out.transcript || input.text || '', assistant: out.reply, intent: out.intent });
 
-    // 항목/취소 반영
-    if (out.intent === 'cancel') conv.pending = [];
-    else conv.pending = out.items || conv.pending;
+    // 의도별 반영
+    if (out.intent === 'cancel') {
+      conv.pending = []; conv.pendingOps = { edits: [], deletes: [] };
+    } else if (out.intent === 'edit' || out.intent === 'delete') {
+      conv.pendingOps = { edits: out.edits || [], deletes: out.deletes || [] };
+      if (out.items && out.items.length) conv.pending = out.items;
+    } else {
+      conv.pending = out.items || conv.pending;
+    }
     renderPending();
 
     // 종료 키워드
     if (/(끝|종료|그만|마칠|닫아)/.test(out.transcript || '')) {
       await speak('기록을 마칠게요'); endConversation(); return;
     }
-    // 저장 의도
-    if (out.intent === 'confirm') { await confirmSave(); return; }
+    // 확정 의도 → 미저장 항목 + 수정/삭제 제안 모두 적용
+    if (out.intent === 'confirm') { await confirmAll(); return; }
 
     // 응답 읽고 다시 듣기 (대화 모드일 때만)
     if (conv.active) { await speak(out.reply || '네'); listenTurn(); }
@@ -148,23 +154,27 @@
   }
 
   // ════════════════ 저장 ════════════════
-  async function confirmSave() {
+  async function confirmAll() {
     const items = conv.pending.filter(validItem).map(toAppendItem);
-    if (!items.length) {
-      await speak('저장할 내용이 없어요');
+    const edits = (conv.pendingOps.edits || []).filter(e => e && e.id && e.fields && Object.keys(e.fields).length);
+    const deletes = (conv.pendingOps.deletes || []).filter(d => d && (d.id || typeof d === 'string'));
+    if (!items.length && !edits.length && !deletes.length) {
+      await speak('처리할 내용이 없어요');
       if (conv.active) listenTurn(); else setMic('idle');
       return;
     }
-    try {
-      await API.append(items);
-      conv.pending = []; renderPending();
-      await refreshToday();
-      await speak((items.length > 1 ? items.length + '건 ' : '') + '저장했어요');
-      Core.toast('저장 완료 ✓');
-    } catch (e) {
-      await speak('오프라인이라 임시 저장했어요. 연결되면 자동으로 기록할게요.');
-      conv.pending = []; renderPending();
-    }
+    let failed = 0;
+    try { if (items.length) await API.append(items); }
+    catch (e) { await speak('오프라인이라 새 지출은 임시 저장했어요.'); }
+    for (const e of edits) { try { await API.update(e.id, e.fields); } catch (_) { failed++; } }
+    for (const d of deletes) { try { await API.remove(d.id || d); } catch (_) { failed++; } }
+
+    conv.pending = []; conv.pendingOps = { edits: [], deletes: [] };
+    renderPending();
+    await refreshToday();
+    const n = items.length + edits.length + deletes.length;
+    await speak(failed ? '일부는 처리하지 못했어요' : (n > 1 ? n + '건 처리했어요' : '처리했어요'));
+    Core.toast(failed ? '일부 실패' : '완료 ✓');
     if (conv.active) listenTurn(); else setMic('idle');
   }
 
@@ -208,10 +218,14 @@
   function renderPending() {
     const old = document.getElementById('pendingWrap');
     if (old) old.remove();
-    if (!conv.pending.length) return;
+    const ops = conv.pendingOps || { edits: [], deletes: [] };
+    const opCount = (ops.edits ? ops.edits.length : 0) + (ops.deletes ? ops.deletes.length : 0);
+    if (!conv.pending.length && !opCount) return;
+
     const wrap = document.createElement('div');
     wrap.id = 'pendingWrap'; wrap.className = 'pending-wrap';
 
+    // 새 지출(미저장) 카드
     conv.pending.forEach((it, idx) => {
       const card = document.createElement('div');
       card.className = 'pending-card';
@@ -235,17 +249,52 @@
       wrap.appendChild(card);
     });
 
+    // 저장된 내역 수정 제안
+    (ops.edits || []).forEach((e) => {
+      const card = document.createElement('div');
+      card.className = 'pending-card op-edit';
+      card.innerHTML = `<span class="emoji">✏️</span>
+        <div class="pc-main"><div class="pc-title">수정 · ${escape(e.label || e.id)}</div>
+        <div class="pc-sub">${escape(fieldsSummary(e.fields))}</div></div>`;
+      wrap.appendChild(card);
+    });
+    // 저장된 내역 삭제 제안
+    (ops.deletes || []).forEach((d) => {
+      const card = document.createElement('div');
+      card.className = 'pending-card op-del';
+      card.innerHTML = `<span class="emoji">🗑️</span>
+        <div class="pc-main"><div class="pc-title">삭제 · ${escape(d.label || d.id)}</div></div>`;
+      wrap.appendChild(card);
+    });
+
     const total = conv.pending.reduce((s, it) => s + (Number(it.amount) || 0), 0);
+    const count = conv.pending.length + opCount;
+    const totalLabel = conv.pending.length ? ' ' + Core.won(total) : '';
     const actions = document.createElement('div');
     actions.className = 'pending-actions';
     actions.innerHTML =
       `<button class="btn btn-ghost btn-sm" id="pendClear">취소</button>
-       <button class="btn btn-sm" id="pendSave">저장 (${conv.pending.length}건 ${Core.won(total)})</button>`;
+       <button class="btn btn-sm" id="pendSave">확인 (${count}건${totalLabel})</button>`;
     wrap.appendChild(actions);
     els.convArea.appendChild(wrap);
-    document.getElementById('pendSave').addEventListener('click', confirmSave);
-    document.getElementById('pendClear').addEventListener('click', () => { conv.pending = []; renderPending(); });
+    document.getElementById('pendSave').addEventListener('click', confirmAll);
+    document.getElementById('pendClear').addEventListener('click', () => {
+      conv.pending = []; conv.pendingOps = { edits: [], deletes: [] }; renderPending();
+    });
     scrollToBottom();
+  }
+
+  function fieldsSummary(f) {
+    if (!f) return '';
+    const p = [];
+    if (f.amount != null) p.push('금액→' + Core.won(f.amount));
+    if (f.category) p.push('분류→' + f.category);
+    if (f.item) p.push('내용→' + f.item);
+    if (f.payer) p.push('지출자→' + f.payer);
+    if (f.date) p.push('날짜→' + f.date);
+    if (f.payment_method) p.push('결제→' + f.payment_method);
+    if (f.memo) p.push('메모→' + f.memo);
+    return p.join(' · ');
   }
 
   // 탭으로 필드 수정 (음성 수정도 가능하지만 수동 보정용)
