@@ -23,11 +23,9 @@
   async function load() {
     const { y, m, str } = ym();
     $('monthLabel').textContent = `${y}년 ${m}월`;
-    try {
-      const r = await API.list({ period: 'range', from: `${str}-01`, to: `${str}-31` });
-      byPayment = (r && r.ok && r.summary.byPayment) || {};
-    } catch (e) { Core.toast('불러오기 실패'); byPayment = {}; }
-    render();
+    const apply = (r) => { byPayment = (r && r.ok && r.summary.byPayment) || {}; render(); };
+    try { await API.listSWR({ period: 'range', from: `${str}-01`, to: `${str}-31` }, apply); }
+    catch (e) { Core.toast('불러오기 실패'); byPayment = {}; render(); }
   }
 
   async function refreshMethods() {

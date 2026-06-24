@@ -338,13 +338,15 @@
   }
 
   async function refreshToday() {
-    let r;
-    try { r = await API.list({ period: 'today' }); }
-    catch (e) { return; }
-    if (!r || !r.ok) return;
-    els.todayTotal.textContent = Core.won(r.summary.total);
-    if (!r.expenses.length) { els.todayList.innerHTML = '<div class="empty">아직 오늘 지출이 없어요</div>'; return; }
-    els.todayList.innerHTML = r.expenses.map(rowHtml).join('');
+    const draw = (r) => {
+      if (!r || !r.ok) return;
+      els.todayTotal.textContent = Core.won(r.summary.total);
+      els.todayList.innerHTML = r.expenses.length
+        ? r.expenses.map(rowHtml).join('')
+        : '<div class="empty">아직 오늘 지출이 없어요</div>';
+    };
+    try { await API.listSWR({ period: 'today' }, draw); }
+    catch (e) { /* 캐시 없음 + 네트워크 실패 */ }
   }
 
   function rowHtml(r) {

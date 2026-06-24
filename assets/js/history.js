@@ -33,13 +33,14 @@
   async function load() {
     const { y, m, str } = ym();
     els.monthLabel.textContent = `${y}년 ${m}월`;
-    let r;
-    try { r = await API.list({ period: 'range', from: `${str}-01`, to: `${str}-31` }); }
-    catch (e) { Core.toast('불러오기 실패'); return; }
-    if (!r || !r.ok) return;
-    all = r.expenses;
-    els.monthTotal.textContent = Core.won(r.summary.total);
-    render();
+    const apply = (r) => {
+      if (!r || !r.ok) return;
+      all = r.expenses;
+      els.monthTotal.textContent = Core.won(r.summary.total);
+      render();
+    };
+    try { await API.listSWR({ period: 'range', from: `${str}-01`, to: `${str}-31` }, apply); }
+    catch (e) { Core.toast('불러오기 실패'); }
   }
 
   function buildFilters() {

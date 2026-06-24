@@ -78,7 +78,7 @@ const Core = (() => {
         btn.disabled = true; errEl.textContent = '확인 중…';
         try {
           const cfg = await API.verifyPin(pin);
-          if (cfg) { applyConfig(cfg); ov.remove(); resolve(true); }
+          if (cfg) { applyConfig(cfg); cacheConfig(cfg); ov.remove(); resolve(true); }
           else { errEl.textContent = 'PIN이 올바르지 않습니다'; input.value = ''; btn.disabled = false; }
         } catch (e) {
           errEl.textContent = '연결 실패: ' + (e.message || e); btn.disabled = false;
@@ -126,6 +126,17 @@ const Core = (() => {
     });
   }
 
+  // ── 설정 캐시(빠른 시작) ──
+  const CFG_KEY = 'ledger_config_cache';
+  function cacheConfig(cfg) { try { localStorage.setItem(CFG_KEY, JSON.stringify(cfg)); } catch (_) {} }
+  function loadCachedConfig() { try { return JSON.parse(localStorage.getItem(CFG_KEY)); } catch (_) { return null; } }
+  function revalidateConfig() {
+    API.config().then(cfg => {
+      if (cfg && cfg.ok) { applyConfig(cfg); cacheConfig(cfg); }
+      else if (cfg && cfg.error === 'unauthorized') { API.clearPin(); location.reload(); }
+    }).catch(() => {});
+  }
+
   // ── 부팅 ──
   async function init({ page, headerExtra }) {
     // 서비스워커 등록(PWA/오프라인) + TTS 설정 반영
@@ -142,12 +153,22 @@ const Core = (() => {
     }
     renderChrome(page, headerExtra);
 
-    // 저장된 PIN 으로 자동 인증 시도
+    // 빠른 시작: PIN + 캐시가 있으면 즉시 시작, 백그라운드에서 검증·갱신
+    const cached = loadCachedConfig();
+    if (API.getPin() && cached && cached.ok) {
+      applyConfig(cached);
+      revalidateConfig();
+      await ensureDeviceOwner();
+      API.flushQueue();
+      return state;
+    }
+
+    // 캐시 없음/미인증 → 1회 블로킹 인증
     let authed = false;
     if (API.getPin()) {
       try {
         const cfg = await API.config();
-        if (cfg && cfg.ok) { applyConfig(cfg); authed = true; }
+        if (cfg && cfg.ok) { applyConfig(cfg); cacheConfig(cfg); authed = true; }
         else API.clearPin();
       } catch (_) { /* 네트워크 문제 → PIN 게이트로 */ }
     }

@@ -77,6 +77,20 @@ const API = (() => {
     return { flushed, remaining: remaining.length };
   }
 
+  // ── 읽기 캐시 (stale-while-revalidate) ──
+  function cacheGet(key) { try { return JSON.parse(localStorage.getItem('c_' + key)); } catch { return null; } }
+  function cacheSet(key, val) { try { localStorage.setItem('c_' + key, JSON.stringify(val)); } catch {} }
+  async function listSWR(params, onData) {
+    const key = 'list_' + JSON.stringify(params || {});
+    const cached = cacheGet(key);
+    if (cached) { try { onData(cached, true); } catch (_) {} }   // 캐시 즉시 표시
+    try {
+      const fresh = await call('list', params);
+      if (fresh && fresh.ok) { cacheSet(key, fresh); onData(fresh, false); }  // 최신으로 갱신
+      return fresh;
+    } catch (e) { if (cached) return cached; throw e; }
+  }
+
   return {
     cfg, configured, call,
     getPin, setPin, clearPin, verifyPin,
@@ -84,6 +98,7 @@ const API = (() => {
     converse: (p) => call('converse', p),
     append,
     list: (p) => call('list', p),
+    listSWR,
     update: (id, fields) => call('update', { id, fields }),
     remove: (id) => call('delete', { id }),
     paymentSave: (payment) => call('paymentSave', { payment }),

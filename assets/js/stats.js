@@ -22,11 +22,9 @@
   async function load() {
     const y = cursor.getFullYear(), m = String(cursor.getMonth() + 1).padStart(2, '0');
     els.monthLabel.textContent = `${y}년 ${m}월`;
-    let r;
-    try { r = await API.list({ period: 'range', from: `${y}-${m}-01`, to: `${y}-${m}-31` }); }
-    catch (e) { Core.toast('불러오기 실패'); return; }
-    if (!r || !r.ok) return;
-    render(r.summary);
+    const apply = (r) => { if (r && r.ok) render(r.summary); };
+    try { await API.listSWR({ period: 'range', from: `${y}-${m}-01`, to: `${y}-${m}-31` }, apply); }
+    catch (e) { Core.toast('불러오기 실패'); }
   }
 
   function render(sum) {
