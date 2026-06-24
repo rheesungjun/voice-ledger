@@ -202,9 +202,11 @@ function apiConfig() {
 
 // ───────────────────────── API: converse (Gemini) ─────────────────────────
 function apiConverse(params) {
-  var members = readObjects('members').map(function (r) { return r.name; }).filter(String);
+  var memberRows = readObjects('members').filter(function (r) { return r.name; })
+    .map(function (r) { return { name: r.name, aliases: r.aliases || '' }; });
   var categories = readObjects('categories').map(function (r) { return r.name; }).filter(String);
   var payments = readObjects('payments').map(function (r) { return r.name; }).filter(String);
+  var deviceOwner = params.device_owner || '';
   var today = Utilities.formatDate(new Date(), KST, 'yyyy-MM-dd');
   var weekday = ['일', '월', '화', '수', '목', '금', '토'][Number(Utilities.formatDate(new Date(), KST, 'u')) % 7];
 
@@ -219,7 +221,7 @@ function apiConverse(params) {
     .sort(function (a, b) { return String(b.date).localeCompare(String(a.date)); })
     .slice(0, 40);
 
-  var system = buildPrompt(today, weekday, members, categories, payments,
+  var system = buildPrompt(today, weekday, memberRows, categories, payments, deviceOwner,
                            params.history || [], params.pending || [], recent);
 
   var parts = [{ text: system }];
@@ -237,6 +239,7 @@ function apiConverse(params) {
     if (it.category && categories.indexOf(it.category) === -1) it.category = '기타';
     if (it.amount != null) it.amount = Math.round(Number(it.amount)) || null;
     if (!it.date) it.date = today;
+    if (!it.payer && deviceOwner) it.payer = deviceOwner;
   });
   (out.edits || []).forEach(function (e) {
     if (e.fields) {
@@ -255,11 +258,14 @@ function apiConverse(params) {
   };
 }
 
-function buildPrompt(today, weekday, members, categories, payments, history, pending, recent) {
+function buildPrompt(today, weekday, memberRows, categories, payments, deviceOwner, history, pending, recent) {
   return [
     '당신은 한국어 음성 가계부 비서입니다. 사용자의 발화(오디오 또는 텍스트)를 받아 지출 내역을 구조화합니다.',
     '오늘 날짜: ' + today + ' (' + weekday + '요일, KST). "어제/그제/지난 금요일" 등 상대표현은 이 기준으로 해석하세요.',
-    '구성원(지출자 후보): ' + JSON.stringify(members) + '. "내가/나"는 첫 번째 구성원, "자기/너/진이"는 두 번째로 매핑하되 별칭을 우선하세요.',
+    '구성원(payer는 반드시 이들의 name 중 하나): ' + JSON.stringify(memberRows) + '. aliases는 그 사람을 부르는 호칭입니다.',
+    (deviceOwner
+      ? '이 기기 사용자는 "' + deviceOwner + '" 입니다. 화자 자신("내가/나/제가") 또는 지출자를 명시하지 않으면 payer="' + deviceOwner + '". 다른 구성원을 호칭/이름으로 명시하면(예: "아내가","자기가") 그 사람으로 설정.'
+      : '"내가/나"는 화자, 상대 호칭은 다른 구성원으로 매핑하세요.'),
     '사용 가능한 카테고리(이 목록 안에서만 고르세요, 새로 만들지 마세요): ' + JSON.stringify(categories) + '. 애매하면 "기타".',
     '등록된 지불수단(payment_method는 가능하면 이 목록의 이름으로 매핑): ' + JSON.stringify(payments) + '.',
     '금액은 한국어 표현을 정수(원)로 변환: "삼천오백원"→3500, "만오천"→15000, "3만2천"→32000.',

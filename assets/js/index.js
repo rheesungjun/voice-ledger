@@ -116,7 +116,7 @@
     let out;
     try {
       out = await API.converse(Object.assign(
-        { history: conv.history.slice(-8), pending: conv.pending }, input));
+        { history: conv.history.slice(-8), pending: conv.pending, device_owner: Core.getDeviceOwner() }, input));
     } catch (e) {
       conv.busy = false;
       Core.toast('인식 실패: ' + (e.message || e));
@@ -139,6 +139,8 @@
     } else {
       conv.pending = out.items || conv.pending;
     }
+    const owner = Core.getDeviceOwner();
+    if (owner) conv.pending.forEach(it => { if (!it.payer) it.payer = owner; });
     renderPending();
 
     // 종료 키워드

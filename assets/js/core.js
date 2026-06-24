@@ -97,6 +97,35 @@ const Core = (() => {
     state.categories.forEach(c => { state.catMap[c.name] = c.emoji || '📦'; });
   }
 
+  // ── 기기 사용자(지출자 자동 구분) ──
+  const DEV_KEY = 'ledger_device_owner';
+  function getDeviceOwner() { return localStorage.getItem(DEV_KEY) || ''; }
+  function setDeviceOwner(n) { if (n) localStorage.setItem(DEV_KEY, n); else localStorage.removeItem(DEV_KEY); }
+  function ensureDeviceOwner() {
+    return new Promise((resolve) => {
+      const names = state.members.map(m => m.name);
+      const cur = getDeviceOwner();
+      if (!names.length) { resolve(); return; }
+      if (cur && names.indexOf(cur) >= 0) { resolve(); return; }
+      if (names.length === 1) { setDeviceOwner(names[0]); resolve(); return; }
+      const ov = document.createElement('div');
+      ov.className = 'pin-overlay';
+      ov.innerHTML = `<div class="pin-box card">
+        <div class="pin-logo">👋</div>
+        <p>이 기기는 누가 사용하나요?<br><span style="font-size:0.75rem">선택하면 지출자가 자동 입력됩니다 (설정에서 변경 가능)</span></p>
+        <div id="ownerBtns" style="display:flex;flex-direction:column;gap:10px;margin-top:16px"></div></div>`;
+      document.body.appendChild(ov);
+      const box = ov.querySelector('#ownerBtns');
+      state.members.forEach(m => {
+        const b = document.createElement('button');
+        b.className = 'btn'; b.style.width = '100%';
+        b.textContent = (m.emoji || '👤') + ' ' + m.name;
+        b.addEventListener('click', () => { setDeviceOwner(m.name); ov.remove(); resolve(); });
+        box.appendChild(b);
+      });
+    });
+  }
+
   // ── 부팅 ──
   async function init({ page, headerExtra }) {
     // 서비스워커 등록(PWA/오프라인) + TTS 설정 반영
@@ -114,17 +143,19 @@ const Core = (() => {
     renderChrome(page, headerExtra);
 
     // 저장된 PIN 으로 자동 인증 시도
+    let authed = false;
     if (API.getPin()) {
       try {
         const cfg = await API.config();
-        if (cfg && cfg.ok) { applyConfig(cfg); API.flushQueue(); return state; }
-        API.clearPin();
+        if (cfg && cfg.ok) { applyConfig(cfg); authed = true; }
+        else API.clearPin();
       } catch (_) { /* 네트워크 문제 → PIN 게이트로 */ }
     }
-    await showPinGate();
+    if (!authed) await showPinGate();
+    await ensureDeviceOwner();
     API.flushQueue();
     return state;
   }
 
-  return { state, init, won, todayKST, fmtDate, catEmoji, toast };
+  return { state, init, won, todayKST, fmtDate, catEmoji, toast, getDeviceOwner, setDeviceOwner };
 })();

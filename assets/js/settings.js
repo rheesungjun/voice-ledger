@@ -15,6 +15,17 @@
       : `<span class="dot bad"></span>오류`;
   } catch (e) { $('connStatus').innerHTML = '<span class="dot bad"></span>연결 실패'; }
 
+  // 이 기기 사용자 (지출자 자동 구분)
+  const ownerSel = $('deviceOwner');
+  const owner = Core.getDeviceOwner();
+  ownerSel.innerHTML = '<option value="">미설정</option>' +
+    (cfg.members || []).map(m =>
+      `<option value="${esc(m.name)}" ${m.name === owner ? 'selected' : ''}>${(m.emoji || '👤')} ${esc(m.name)}</option>`).join('');
+  ownerSel.addEventListener('change', () => {
+    Core.setDeviceOwner(ownerSel.value);
+    Core.toast('이 기기 사용자: ' + (ownerSel.value || '미설정'));
+  });
+
   // TTS 토글
   const ttsToggle = $('ttsToggle');
   ttsToggle.checked = !!LEDGER_CONFIG.tts;
