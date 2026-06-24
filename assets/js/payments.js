@@ -36,39 +36,61 @@
   }
 
   function render() {
-    const methods = Core.state.payments.slice();
+    const base = Core.state.payments.slice();
     const known = {};
-    methods.forEach(m => { known[m.name] = true; });
+    base.forEach(m => { known[m.name] = true; });
     // 등록 안 됐지만 사용된 수단도 표시
     Object.keys(byPayment).forEach(name => {
-      if (name && !known[name]) methods.push({ name, type: '기타', target: 0, benefit: '', note: '' });
+      if (name && !known[name]) base.push({ name, type: '기타', target: 0, benefit: '', note: '' });
     });
 
-    if (!methods.length) { $('payList').innerHTML = '<div class="empty">등록된 지불수단이 없어요. 위에서 추가하세요.</div>'; return; }
+    if (!base.length) { $('payList').innerHTML = '<div class="empty">등록된 카드가 없어요. 위에서 추가하세요.</div>'; return; }
 
-    $('payList').innerHTML = methods.map(cardHtml).join('');
+    const enriched = base.map(m => {
+      const spend = byPayment[m.name] || 0;
+      const target = Number(m.target) || 0;
+      return Object.assign({}, m, {
+        spend, target,
+        remaining: target ? Math.max(target - spend, 0) : 0,
+        met: target > 0 && spend >= target
+      });
+    });
+
+    // 추천: 실적 미달 카드 중 '남은 금액이 가장 적은'(달성 임박) 카드를 먼저 채우도록
+    const unmet = enriched.filter(m => m.target > 0 && !m.met).sort((a, b) => a.remaining - b.remaining);
+    const rec = unmet[0] || null;
+
+    // 정렬: 미달(임박순) → 목표없음 → 달성
+    const rank = m => m.met ? 2 : (m.target > 0 ? 0 : 1);
+    enriched.sort((a, b) => (rank(a) - rank(b)) || (a.remaining - b.remaining));
+
+    let banner = '';
+    if (rec) {
+      banner = `<div class="card rec-banner">💡 다음 결제는 <b>${esc(rec.name)}</b><br>
+        <span>남은 실적 ${Core.won(rec.remaining)} 채우면 혜택 달성</span></div>`;
+    } else if (enriched.some(m => m.target > 0)) {
+      banner = `<div class="card rec-banner done">이번 달 실적 카드 모두 달성 🎉</div>`;
+    }
+
+    $('payList').innerHTML = banner + enriched.map(m => cardHtml(m, rec && m.name === rec.name)).join('');
     $('payList').querySelectorAll('[data-edit]').forEach(b =>
       b.addEventListener('click', () => fillForm(b.dataset.edit)));
     $('payList').querySelectorAll('[data-del]').forEach(b =>
       b.addEventListener('click', () => onDelete(b.dataset.del)));
   }
 
-  function cardHtml(m) {
-    const spend = byPayment[m.name] || 0;
-    const target = Number(m.target) || 0;
-    const pct = target ? Math.min(100, Math.round(spend / target * 100)) : 0;
-    const remain = Math.max(target - spend, 0);
-    const done = target > 0 && spend >= target;
-    const bar = target
-      ? `<div class="bar-track"><div class="bar-fill ${done ? 'done' : ''}" style="width:${pct}%"></div></div>
+  function cardHtml(m, isRec) {
+    const pct = m.target ? Math.min(100, Math.round(m.spend / m.target * 100)) : 0;
+    const bar = m.target
+      ? `<div class="bar-track"><div class="bar-fill ${m.met ? 'done' : ''}" style="width:${pct}%"></div></div>
          <div class="pay-meta">
-           <span>사용 <b>${Core.won(spend)}</b> / 목표 ${Core.won(target)}</span>
-           <span>${done ? '<span class="badge-done">실적 달성 ✓</span>' : '남은 ' + Core.won(remain)}</span>
+           <span>사용 <b>${Core.won(m.spend)}</b> / 목표 ${Core.won(m.target)}</span>
+           <span>${m.met ? '<span class="badge-done">실적 달성 ✓</span>' : '남은 <b>' + Core.won(m.remaining) + '</b>'}</span>
          </div>`
-      : `<div class="pay-meta" style="margin-top:8px"><span>이번 달 사용 <b>${Core.won(spend)}</b></span><span>실적 목표 없음</span></div>`;
-    return `<div class="card pay-card">
+      : `<div class="pay-meta" style="margin-top:8px"><span>이번 달 사용 <b>${Core.won(m.spend)}</b></span><span>실적 목표 없음</span></div>`;
+    return `<div class="card pay-card ${isRec ? 'recommended' : ''}">
       <div class="pay-head">
-        <div><span class="pay-name">${esc(m.name)}</span><span class="pay-type">${esc(m.type || '')}</span></div>
+        <div><span class="pay-name">${esc(m.name)}</span><span class="pay-type">${esc(m.type || '')}</span>${isRec ? '<span class="rec-badge">먼저 쓰기</span>' : ''}</div>
         <div class="pay-actions">
           <button data-edit="${esc(m.name)}" title="수정">✏️</button>
           <button data-del="${esc(m.name)}" title="삭제">🗑️</button>
