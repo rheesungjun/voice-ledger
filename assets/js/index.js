@@ -7,6 +7,7 @@
   const conv = { active: false, busy: false, history: [], pending: [], pendingOps: { edits: [], deletes: [] } };
   // 오디오 자원
   let stream = null, audioCtx = null, analyser = null, vadRAF = null, recorder = null, chunks = [];
+  let sawSpeech = false;   // 이번 턴에 실제 말소리가 감지됐는지(잡음/에코 전송 방지)
 
   // ── 부팅 ──
   try { await Core.init({ page: 'index' }); }
@@ -42,7 +43,9 @@
   async function startConversation() {
     if (conv.active) return;
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+      });
     } catch (e) { Core.toast('마이크 권한이 필요해요'); return; }
 
     audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
@@ -62,6 +65,7 @@
     if (!conv.active) return;
     setMic('listening');
     chunks = [];
+    sawSpeech = false;
     const mime = pickMime();
     try {
       recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
@@ -72,11 +76,18 @@
     runVAD();
   }
 
+  // 응답 후 잠깐 쉬었다가 다시 듣기 (스피커 잔향이 마이크로 들어가는 것 방지)
+  function relisten(delay) {
+    if (!conv.active) { setMic('idle'); return; }
+    setTimeout(() => { if (conv.active && !conv.busy) listenTurn(); }, delay == null ? 400 : delay);
+  }
+
   // 무음 자동 종료 (Web Audio RMS 감시)
   function runVAD() {
     const buf = new Uint8Array(analyser.fftSize);
     const { silenceMs, threshold, maxMs } = LEDGER_CONFIG.VAD;
-    let spoke = false, silenceStart = null;
+    const warmupMs = 350;       // 시작 직후(TTS 잔향/에코)는 말소리로 치지 않음
+    let silenceStart = null;
     const startAt = performance.now();
     cancelAnimationFrame(vadRAF);
     (function tick() {
@@ -86,8 +97,9 @@
       for (let i = 0; i < buf.length; i++) { const v = (buf[i] - 128) / 128; sum += v * v; }
       const rms = Math.sqrt(sum / buf.length);
       const now = performance.now();
-      if (rms > threshold) { spoke = true; silenceStart = null; }
-      else if (spoke) {
+      const warm = (now - startAt) > warmupMs;
+      if (warm && rms > threshold) { sawSpeech = true; silenceStart = null; }
+      else if (sawSpeech) {
         if (silenceStart === null) silenceStart = now;
         else if (now - silenceStart > silenceMs) { stopTurn(); return; }
       }
@@ -102,9 +114,11 @@
   }
 
   async function onTurnRecorded() {
+    // 말소리가 없었으면(잡음/에코/침묵) 전송하지 않고 다시 듣기
+    if (!sawSpeech) { relisten(150); return; }
     const type = (recorder && recorder.mimeType) || 'audio/webm';
     const blob = new Blob(chunks, { type });
-    if (blob.size < 1400) { if (conv.active) listenTurn(); return; } // 너무 짧음 → 재청취
+    if (blob.size < 1600) { relisten(150); return; } // 너무 짧음 → 재청취
     setMic('processing');
     const b64 = await blobToB64(blob);
     await sendTurn({ audio_base64: b64, mime: type.split(';')[0], source: 'voice' });
@@ -120,11 +134,11 @@
     } catch (e) {
       conv.busy = false;
       Core.toast('인식 실패: ' + (e.message || e));
-      if (conv.active) listenTurn();
+      relisten();
       return;
     }
     conv.busy = false;
-    if (!out || !out.ok) { Core.toast('처리 실패'); if (conv.active) listenTurn(); return; }
+    if (!out || !out.ok) { Core.toast('처리 실패'); relisten(); return; }
 
     if (out.transcript && input.source === 'voice') addBubble('user', out.transcript);
     if (out.reply) addBubble('bot', out.reply);
@@ -150,8 +164,8 @@
     // 확정 의도 → 미저장 항목 + 수정/삭제 제안 모두 적용
     if (out.intent === 'confirm') { await confirmAll(); return; }
 
-    // 응답 읽고 다시 듣기 (대화 모드일 때만)
-    if (conv.active) { await speak(out.reply || '네'); listenTurn(); }
+    // 응답 읽고(말이 끝난 뒤) 다시 듣기
+    if (conv.active) { await speak(out.reply || '네'); relisten(); }
     else { setMic('idle'); }
   }
 
@@ -162,7 +176,7 @@
     const deletes = (conv.pendingOps.deletes || []).filter(d => d && (d.id || typeof d === 'string'));
     if (!items.length && !edits.length && !deletes.length) {
       await speak('처리할 내용이 없어요');
-      if (conv.active) listenTurn(); else setMic('idle');
+      relisten();
       return;
     }
     let failed = 0;
@@ -177,7 +191,7 @@
     const n = items.length + edits.length + deletes.length;
     await speak(failed ? '일부는 처리하지 못했어요' : (n > 1 ? n + '건 처리했어요' : '처리했어요'));
     Core.toast(failed ? '일부 실패' : '완료 ✓');
-    if (conv.active) listenTurn(); else setMic('idle');
+    relisten();
   }
 
   function endConversation() {
@@ -195,12 +209,15 @@
     return new Promise((resolve) => {
       if (!LEDGER_CONFIG.tts || !('speechSynthesis' in window) || !text) { resolve(); return; }
       setMic('speaking');
+      let done = false, t = null;
+      const finish = () => { if (done) return; done = true; if (t) clearTimeout(t); resolve(); };
       const u = new SpeechSynthesisUtterance(text);
       u.lang = 'ko-KR'; u.rate = 1.05;
-      u.onend = resolve; u.onerror = resolve;
+      u.onend = finish; u.onerror = finish;
       speechSynthesis.cancel();
       speechSynthesis.speak(u);
-      setTimeout(resolve, 6000); // 안전장치(음성 없음/멈춤 대비)
+      // onend가 안 오는 모바일 대비 안전장치: 글자수에 비례(고정 6초 컷 제거)
+      t = setTimeout(finish, Math.min(20000, 2500 + text.length * 130));
     });
   }
 
