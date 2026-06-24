@@ -9,3 +9,7 @@ desktop.ini
 
 # 로그/임시
 *.log
+
+# clasp (GAS 배포) — 로컬 전용
+.clasp.json
+.clasprc.json
