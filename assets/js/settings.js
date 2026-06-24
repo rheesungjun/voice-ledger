@@ -7,13 +7,16 @@
 
   const $ = (id) => document.getElementById(id);
 
-  // 연결 상태
-  try {
-    const r = await API.config();
-    $('connStatus').innerHTML = r && r.ok
+  // 연결 상태 — 캐시로 즉시 표시 + 백그라운드 확인(블로킹 X)
+  const sv = Core.state.schemaVersion;
+  $('connStatus').innerHTML = sv
+    ? `<span class="dot ok"></span>연결됨 · v${sv}`
+    : '확인 중…';
+  API.config().then(r => {
+    $('connStatus').innerHTML = (r && r.ok)
       ? `<span class="dot ok"></span>연결됨 · v${r.schema_version}`
       : `<span class="dot bad"></span>오류`;
-  } catch (e) { $('connStatus').innerHTML = '<span class="dot bad"></span>연결 실패'; }
+  }).catch(() => { if (!sv) $('connStatus').innerHTML = '<span class="dot bad"></span>연결 실패'; });
 
   // 이 기기 사용자 (지출자 자동 구분)
   const ownerSel = $('deviceOwner');

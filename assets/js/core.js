@@ -93,6 +93,7 @@ const Core = (() => {
     state.members = cfg.members || [];
     state.categories = cfg.categories || [];
     state.payments = cfg.payments || [];
+    state.schemaVersion = cfg.schema_version;
     state.catMap = {};
     state.categories.forEach(c => { state.catMap[c.name] = c.emoji || '📦'; });
   }
