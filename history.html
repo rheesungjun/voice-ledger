@@ -21,6 +21,23 @@
     .day-head { display: flex; justify-content: space-between; font-size: 0.78rem; color: var(--text-tertiary);
                 margin: 0 4px 6px; font-weight: 600; }
     .expense-item .del { background: none; border: none; color: var(--status-deleted); font-size: 1rem; cursor: pointer; padding: 0 4px; }
+    .expense-item .ei-main, .expense-item .ei-amount, .expense-item .emoji { cursor: pointer; }
+
+    .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 15000;
+      display: flex; align-items: flex-end; opacity: 0; pointer-events: none; transition: opacity .25s; }
+    .modal-overlay.show { opacity: 1; pointer-events: auto; }
+    .modal-sheet { width: 100%; max-width: 800px; margin: 0 auto;
+      background: linear-gradient(to bottom, #fff, var(--brand-cream));
+      border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+      padding: 24px 20px calc(24px + env(safe-area-inset-bottom)); max-height: 90vh; overflow-y: auto;
+      transform: translateY(100%); transition: transform .3s cubic-bezier(0.175,0.885,0.32,1.275); }
+    .modal-overlay.show .modal-sheet { transform: translateY(0); }
+    .modal-handle { width: 40px; height: 5px; background: var(--border-subtle); border-radius: 3px; margin: -6px auto 14px; }
+    .modal-title { font-weight: 700; font-size: 1.05rem; margin-bottom: 4px; }
+    .form-row2 { display: flex; gap: 10px; }
+    .form-row2 > * { flex: 1; min-width: 0; }
+    .modal-actions { display: flex; gap: 10px; margin-top: 18px; }
+    .modal-actions .btn { flex: 1; }
   </style>
 </head>
 <body>
@@ -36,6 +53,35 @@
       <div class="filter-row" id="catFilter"></div>
       <div id="list"></div>
     </main>
+
+    <div class="modal-overlay" id="editOverlay">
+      <div class="modal-sheet">
+        <div class="modal-handle"></div>
+        <div class="modal-title">지출 수정</div>
+        <label>내용</label>
+        <input id="eItem" type="text" />
+        <div class="form-row2">
+          <div><label>금액(원)</label><input id="eAmount" type="number" inputmode="numeric" /></div>
+          <div><label>날짜</label><input id="eDate" type="date" /></div>
+        </div>
+        <div class="form-row2">
+          <div><label>카테고리</label><select id="eCategory"></select></div>
+          <div><label>지출자</label><select id="ePayer"></select></div>
+        </div>
+        <div class="form-row2">
+          <div><label>가게 상호명</label><input id="eStore" type="text" /></div>
+          <div><label>지역</label><input id="eRegion" type="text" /></div>
+        </div>
+        <label>지불수단</label>
+        <select id="ePayment"></select>
+        <label>메모</label>
+        <input id="eMemo" type="text" />
+        <div class="modal-actions">
+          <button class="btn btn-ghost" id="eCancel">취소</button>
+          <button class="btn" id="eSave">저장</button>
+        </div>
+      </div>
+    </div>
   </div>
   <script src="assets/js/config.js"></script>
   <script src="assets/js/api.js"></script>
